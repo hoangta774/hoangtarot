@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Tarot AR - Faster Scroll</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050505; font-family: 'Times New Roman', serif; color: #fff; }
+        
+        #input-video { 
+            position: fixed; top: 0; left: 0; 
+            width: 100%; height: 100%; object-fit: cover;
+            opacity: 0; z-index: -10; pointer-events: none; 
+        } 
+        
+        #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 2; pointer-events: none; }
+        
+        #guide-text {
+            position: absolute; width: 100%; text-align: center;
+            color: #fff; letter-spacing: 3px; font-weight: normal;
+            text-shadow: 0 0 10px rgba(255, 255, 255, 0.5); pointer-events: none;
+            transition: opacity 0.5s; text-transform: uppercase;
+            font-size: 0.6rem; bottom: 2%; 
+        }
+
+        #counter {
+            position: absolute; top: 30px; right: 40px;
+            font-size: 1.2rem; color: #fff; font-weight: bold;
+            border: 1px solid rgba(255, 255, 255, 0.5); padding: 5px 15px; border-radius: 30px;
+            background: rgba(0, 0, 0, 0.3); backdrop-filter: blur(5px);
+        }
+
+        #credit-text {
+            position: absolute; 
+            color: rgba(255, 255, 255, 0.6); font-family: sans-serif; font-size: 0.8rem;
+            pointer-events: none; z-index: 5; letter-spacing: 1px;
+            text-shadow: 0 0 5px rgba(0,0,0,0.5);
+            bottom: 10px; right: 5px;
+        }
+
+        #loading {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: #000; z-index: 10; display: flex; flex-direction: column;
+            justify-content: center; align-items: center; text-align: center;
+            transition: opacity 1.5s ease-out; pointer-events: auto;
+        }
+        .loader-content { opacity: 0.8; animation: pulse 2s infinite; }
+        @keyframes pulse { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }
+
+        #virtual-cursor {
+            position: absolute; width: 30px; height: 30px;
+            border: 2px solid rgba(255, 255, 255, 0.9); border-radius: 50%;
+            transform: translate(-50%, -50%); pointer-events: none;
+            z-index: 100; display: none; transition: transform 0.1s;
+            box-shadow: 0 0 10px rgba(255,255,255,0.6);
+        }
+        #virtual-cursor.pinching { 
+            background: #fff; width: 15px; height: 15px; border: none; 
+            box-shadow: 0 0 20px #fff, 0 0 40px #fff; 
+            transform: translate(-50%, -50%) scale(1.2);
+        }
+        
+        #result-modal {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 80%; max-width: 900px; max-height: 80vh; overflow-y: auto;
+            background: rgba(10, 10, 10, 0.95); border: 1px solid #fff; 
+            padding: 50px; display: none; pointer-events: auto; 
+            box-shadow: 0 0 100px rgba(255,255,255,0.1); border-radius: 4px; z-index: 20;
+        }
+        #result-modal::-webkit-scrollbar { width: 6px; }
+        
+        #result-modal h2 { 
+            color: #fff; text-align: center; border-bottom: 1px solid #333; 
+            padding-bottom: 20px; margin-top: 0; text-transform: uppercase; 
+            letter-spacing: 4px; font-weight: normal; font-size: 1.8rem;
+        }
+        
+        .reading-section { margin-bottom: 40px; border-bottom: 1px solid #222; padding-bottom: 20px; animation: fadeIn 1.5s ease-out; }
+        .reading-label { color: #888; font-size: 0.7rem; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 15px; display: block;}
+        .reading-body { display: flex; gap: 30px; align-items: start; }
+        .reading-img { width: 100px; border-radius: 4px; filter: grayscale(0.2); transition: filter 0.5s; }
+        .reading-img:hover { filter: grayscale(0); }
+        .reading-content h3 { margin: 0 0 10px 0; color: #fff; font-size: 1.5rem; font-weight: normal; }
+        .reading-desc { color: #ccc; line-height: 1.6; font-size: 1rem; text-align: justify; font-weight: 300; }
+        
+        button.restart-btn { 
+            display: block; margin: 40px auto 0; padding: 15px 50px; 
+            background: transparent; border: 1px solid #fff; color: #fff; 
+            cursor: pointer; font-family: serif; letter-spacing: 3px; text-transform: uppercase;
+            font-size: 0.9rem; transition: all 0.5s; 
+        }
+        button.restart-btn:hover { background: #fff; color: #000; box-shadow: 0 0 20px #fff; }
+
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tween.js/18.6.4/tween.umd.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+    <video id="input-video" playsinline autoplay muted></video>
+    <div id="canvas-container"></div>
+    <div id="virtual-cursor"></div>
+    
+    <div id="ui-layer">
+        <div id="counter">0 / 3</div>
+        <div id="guide-text">Đưa tay lên trước Camera để bắt đầu</div>
+        <div id="credit-text">Người tạo: Tạ Đình Hoàng</div>
+        
+        <div id="result-modal">
+            <h2>Lời Tiên Tri</h2>
+            <div id="final-reading"></div>
+            <button class="restart-btn" onclick="location.reload()">Trải Bài Mới</button>
+        </div>
+    </div>
+
+    <div id="loading">
+        <div class="loader-content">
+            <div style="font-size: 2rem; color: #fff;">✦</div>
+            <div style="font-size: 0.8rem; color: #888; letter-spacing: 4px; margin-top: 10px;">LOADING...</div>
+        </div>
+    </div>
+
+    <script>
+        // --- DATA ---
+        const TAROT_DATA = [
+            { name: "The Fool", 
+            url: "./photo/0-Fool.jpg", 
+            meaning: "Tình yêu đang mở ra một khởi đầu mới, lời khuyên là hãy dám bước tới nhưng đừng mù quáng, cần vừa tin vừa tỉnh." },
+            { name: "The Magician", 
+            url: "./photo/1-Magician.jpg", 
+            meaning: "Bạn có đủ khả năng và sức hút để tạo ra tình yêu mình mong muốn, lời khuyên là hãy chủ động và chân thành, đừng thao túng cảm xúc người khác." },
+            { name: "The High Priestess", 
+            url: "./photo/2-High-Priestess.jpg", 
+            meaning: "Tình yêu lúc này cần sự lắng nghe trực giác và kiên nhẫn, lời khuyên là đừng vội hành động khi mọi thứ chưa rõ ràng." },
+            { name: "The Empress", 
+            url: "./photo/3-Empress.jpg", 
+            meaning: "Tình yêu nở rộ khi bạn biết yêu thương và trân trọng bản thân, lời khuyên là hãy nuôi dưỡng cảm xúc thay vì ép buộc kết quả." },
+            { name: "The Emperor", 
+            url: "./photo/4-Emperor.jpg", 
+            meaning: "Tình yêu cần sự ổn định và ranh giới rõ ràng, lời khuyên là hãy yêu bằng trách nhiệm chứ không chỉ cảm xúc." },
+            { name: "The Hierophant", 
+            url: "./photo/5-Hierophant.jpg", 
+            meaning: "Tình yêu hướng đến sự nghiêm túc và giá trị lâu dài, lời khuyên là hãy tôn trọng cam kết và chuẩn mực chung thay vì yêu theo cảm xúc nhất thời." },
+            { name: "The Lovers", 
+            url: "./photo/6-Lovers.jpg", 
+            meaning: "Tình yêu đặt bạn trước một lựa chọn quan trọng, lời khuyên là hãy chọn bằng sự đồng thuận giữa trái tim và lý trí." },
+            { name: "The Chariot", 
+            url: "./photo/7-Chariot.jpg", 
+            meaning: "Tình yêu chỉ tiến lên khi bạn đủ quyết tâm và kiểm soát cảm xúc, lời khuyên là hãy chủ động dẫn dắt thay vì để mối quan hệ trôi theo hoàn cảnh." },
+            { name: "Strength", 
+            url: "./photo/8-Strength.jpg", 
+            meaning: "Tình yêu cần sự kiên nhẫn và dịu dàng nội tâm, lời khuyên là hãy chinh phục bằng thấu hiểu thay vì ép buộc." },
+            { name: "The Hermit", 
+            url: "./photo/9-Hermit.jpg", 
+            meaning: "Tình yêu cần thời gian tĩnh lặng để hiểu rõ bản thân, lời khuyên là hãy lùi lại suy ngẫm trước khi tiếp tục hay bắt đầu một mối quan hệ." },
+            { name: "Wheel of Fortune", 
+            url: "./photo/10-Wheel.jpg", 
+            meaning: "Tình yêu đang bước vào giai đoạn thay đổi ngoài tầm kiểm soát, lời khuyên là hãy linh hoạt đón nhận và tin rằng mọi việc xảy ra đều có lý do." },
+            { name: "Justice", 
+            url: "./photo/11-Justice.jpg", 
+            meaning: "Tình yêu cần sự công bằng và trung thực, lời khuyên là hãy đối diện sự thật và chịu trách nhiệm cho lựa chọn của mình." },
+            { name: "The Hanged Man", 
+            url: "./photo/12-Hanged-Man.jpg", 
+            meaning: "Tình yêu đang bị đình trệ để bạn đổi góc nhìn, lời khuyên là hãy tạm dừng hy sinh mù quáng và nhìn rõ giá trị của bản thân." },
+            { name: "Death", 
+            url: "./photo/13-Death.jpg", 
+            meaning: "Tình yêu đang khép lại một chu kỳ cũ để mở ra điều mới, lời khuyên là hãy dũng cảm buông bỏ những gì không còn phù hợp." },
+            { name: "Temperance", 
+            url: "./photo/14-Temperance.jpg", 
+            meaning: "Tình yêu cần sự cân bằng và hòa hợp, lời khuyên là hãy kiên nhẫn điều chỉnh cảm xúc thay vì vội vàng đi đến cực đoan." },
+            { name: "The Devil", 
+            url: "./photo/15-Devil.jpg", 
+            meaning: "Tình yêu đang bị ràng buộc bởi ham muốn hoặc lệ thuộc, lời khuyên là hãy nhận ra điều gì đang trói buộc bạn và chủ động giải phóng bản thân." },
+            { name: "The Tower", 
+            url: "./photo/16-Tower.jpg", 
+            meaning: "Tình yêu buộc bạn đối diện sự thật phũ phàng để phá vỡ ảo tưởng, lời khuyên là hãy chấp nhận sụp đổ cần thiết để bắt đầu lại vững vàng hơn." },
+            { name: "The Star", 
+            url: "./photo/17-Star.jpg", 
+            meaning: "Tình yêu mang năng lượng chữa lành và hy vọng, lời khuyên là hãy tin vào tương lai và mở lòng sau những tổn thương đã qua." },
+            { name: "The Moon", 
+            url: "./photo/18-Moon.jpg", 
+            meaning: "Tình yêu đang bị che phủ bởi mơ hồ và nỗi sợ, lời khuyên là đừng để cảm xúc dẫn dắt mù quáng mà hãy tìm sự rõ ràng trước khi tin tưởng." },
+            { name: "The Sun", 
+            url: "./photo/19-Sun.jpg", 
+            meaning: "Tình yêu đem lại niềm vui và sự rõ ràng, lời khuyên là hãy sống thật với cảm xúc tích cực và đón nhận hạnh phúc một cách cởi mở." },
+            { name: "Judgement", 
+            url: "./photo/20-Judgement.jpg", 
+            meaning: "Tình yêu kêu gọi bạn thức tỉnh và đưa ra quyết định dứt khoát, lời khuyên là hãy lắng nghe tiếng gọi bên trong để bước sang giai đoạn mới." },
+            { name: "The World", 
+            url: "./photo/21-World.jpg", 
+            meaning: "Tình yêu đang kết thúc một chu kỳ và bắt đầu một giai đoạn mới, lời khuyên là hãy trân trọng những gì đã trải qua và chuẩn bị cho những điều mới mẻ." },
+            { name: "ACE of Cups", 
+            url: "./photo/Ace-of-Cups.jpg", 
+            meaning: "Tình yêu mở ra cơ hội khởi đầu cảm xúc mới, lời khuyên là hãy cho phép trái tim mình đón nhận nhưng đừng quên lắng nghe cảm xúc thật." },
+            { name: "2 of Cups", 
+            url: "./photo/2-of-Cups.jpg", 
+            meaning: "Tình yêu là sự đồng điệu và kết nối hai chiều, lời khuyên là hãy xây dựng mối quan hệ dựa trên sự tôn trọng và cân bằng cảm xúc." },
+            { name: "3 of Cups", 
+            url: "./photo/3-of-Cups.jpg", 
+            meaning: "Tình yêu gắn với niềm vui và sự chia sẻ, lời khuyên là hãy tận hưởng kết nối nhưng cẩn trọng với mối quan hệ mập mờ hoặc người thứ ba." },
+            { name: "4 of Cups", 
+            url: "./photo/4-of-Cups.jpg", 
+            meaning: "Tình yêu đang rơi vào trạng thái thờ ơ hoặc bỏ lỡ cơ hội, lời khuyên là hãy mở mắt nhìn lại điều tốt đẹp đang ở trước mặt bạn." },
+            { name: "5 of Cups", 
+            url: "./photo/5-of-Cups.jpg", 
+            meaning: "Tình yêu mang nỗi buồn và sự tiếc nuối, lời khuyên là hãy học cách buông quá khứ để nhìn thấy cơ hội mới vẫn còn phía trước." },
+            { name: "6 of Cups", 
+            url: "./photo/6-of-Cups.jpg", 
+            meaning: "Tình yêu gắn với ký ức và người cũ, lời khuyên là hãy trân trọng quá khứ nhưng đừng để nó giữ bạn lại." },
+            { name: "7 of Cups", 
+            url: "./photo/7-of-Cups.jpg", 
+            meaning: "Tình yêu bị bao phủ bởi ảo tưởng và lựa chọn mơ hồ, lời khuyên là hãy tỉnh táo phân biệt điều bạn muốn và điều bạn cần." },
+            { name: "8 of Cups", 
+            url: "./photo/8-of-Cups.jpg", 
+            meaning: "Tình yêu đến lúc phải rời đi để tìm giá trị sâu sắc hơn, lời khuyên là hãy can đảm bước tiếp dù lòng còn vương vấn." },
+            { name: "9 of Cups", 
+            url: "./photo/9-of-Cups.jpg", 
+            meaning: "Tình yêu mang lại sự mãn nguyện và hài lòng cảm xúc, lời khuyên là hãy tận hưởng hạnh phúc nhưng đừng trở nên ích kỷ." },
+            { name: "10 of Cups", 
+            url: "./photo/10-of-Cups.jpg", 
+            meaning: "Tình yêu đạt đến sự viên mãn và hòa hợp lâu dài, lời khuyên là hãy trân trọng và gìn giữ hạnh phúc bạn đang có." },
+            { name: "Page of Cups", 
+            url: "./photo/Page-of-Cups.jpg", 
+            meaning: "Tình yêu khởi đầu bằng cảm xúc ngây thơ và chân thành, lời khuyên là hãy mở lòng đón nhận nhưng đừng quá mơ mộng." },
+            { name: "Knight of Cups", 
+            url: "./photo/Knight-of-Cups.jpg", 
+            meaning: "Tình yêu mang năng lượng lãng mạn và nồng nàn, lời khuyên là hãy chủ động bày tỏ cảm xúc nhưng giữ sự chân thành, đừng phiêu lưu mù quáng." },
+            { name: "Queen of Cups", 
+            url: "./photo/Queen-of-Cups.jpg", 
+            meaning: "Tình yêu cần sự thấu hiểu và dịu dàng, lời khuyên là hãy nuôi dưỡng cảm xúc của cả bản thân lẫn người bạn yêu một cách cân bằng." },
+            { name: "King of Cups", 
+            url: "./photo/King-of-Cups.jpg", 
+            meaning: "Tình yêu cần sự lãnh đạo và kiểm soát cảm xúc, lời khuyên là hãy giữ vững lý trí khi đối mặt với những tình huống cảm xúc phức tạp." },
+            { name: "ACE of Pentacles", 
+            url: "./photo/Ace-of-Pentacles.jpg", 
+            meaning: "Tình yêu mang cơ hội ổn định và bền vững, lời khuyên là hãy xây dựng mối quan hệ dựa trên giá trị thực tế và trách nhiệm." },
+            { name: "2 of Pentacles", 
+            url: "./photo/2-of-Pentacles.jpg", 
+            meaning: "Tình yêu đang cần cân bằng giữa nhiều mối quan hệ hoặc trách nhiệm, lời khuyên là hãy quản lý thời gian và cảm xúc khéo léo để duy trì hài hòa." },
+            { name: "3 of Pentacles", 
+            url: "./photo/3-of-Pentacles.jpg", 
+            meaning: "Tình yêu gắn với sự hợp tác và nỗ lực, lời khuyên là hãy làm việc cùng nhau để xây dựng mối quan hệ bền vững." },
+            { name: "4 of Pentacles", 
+            url: "./photo/4-of-Pentacles.jpg", 
+            meaning: "Tình yêu bị ảnh hưởng bởi sự chiếm giữ hoặc lo sợ mất mát, lời khuyên là hãy buông bớt kiểm soát và cho mối quan hệ không gian để phát triển." },
+            { name: "5 of Pentacles", 
+            url: "./photo/5-of-Pentacles.jpg", 
+            meaning: "Tình yêu mang cảm giác bị bỏ rơi hoặc thiếu thốn, lời khuyên là hãy tìm sự hỗ trợ và đừng tự cô lập mình trong nỗi cô đơn." },
+            { name: "6 of Pentacles", 
+            url: "./photo/6-of-Pentacles.jpg", 
+            meaning: "Tình yêu dựa trên sự cho và nhận cân bằng, lời khuyên là hãy cho đi và nhận lại một cách công bằng để mối quan hệ bền vững." },
+            { name: "7 of Pentacles", 
+            url: "./photo/7-of-Pentacles.jpg", 
+            meaning: "Tình yêu cần kiên nhẫn và nhìn nhận kết quả lâu dài, lời khuyên là hãy đầu tư thời gian và công sức một cách khôn ngoan trước khi mong đợi thành quả." },
+            { name: "8 of Pentacles", 
+            url: "./photo/8-of-Pentacles.jpg", 
+            meaning: "Tình yêu phát triển nhờ nỗ lực và học hỏi không ngừng, lời khuyên là hãy chăm sóc và rèn luyện mối quan hệ để gặt hái kết quả bền vững." },
+            { name: "9 of Pentacles", 
+            url: "./photo/9-of-Pentacles.jpg", 
+            meaning: "Tình yêu hài hòa khi bạn độc lập và tự tin, lời khuyên là hãy giữ giá trị bản thân và tận hưởng hạnh phúc mà không phụ thuộc vào người khác." },
+            { name: "10 of Pentacles", 
+            url: "./photo/10-of-Pentacles.jpg", 
+            meaning: "Tình yêu đạt sự ổn định và bền vững lâu dài, lời khuyên là hãy xây dựng mối quan hệ dựa trên giá trị chung và tương lai chắc chắn." },
+            { name: "Page of Pentacles", 
+            url: "./photo/Page-of-Pentacles.jpg", 
+            meaning: "Tình yêu mới bắt đầu với sự tò mò và nghiêm túc, lời khuyên là hãy kiên nhẫn học hỏi và chăm sóc mối quan hệ từng bước." },
+            { name: "Knight of Pentacles", 
+            url: "./photo/Knight-of-Pentacles.jpg", 
+            meaning: "Tình yêu tiến triển chậm nhưng chắc chắn, lời khuyên là hãy kiên nhẫn và duy trì nỗ lực đều đặn để mối quan hệ bền vững." },
+            { name: "Queen of Pentacles", 
+            url: "./photo/Queen-of-Pentacles.jpg", 
+            meaning: "Tình yêu ổn định nhờ sự quan tâm và chăm sóc thực tế, lời khuyên là hãy nuôi dưỡng mối quan hệ bằng sự ấm áp và trách nhiệm." },
+            { name: "King of Pentacles",
+            url: "./photo/King-of-Pentacles.jpg", 
+            meaning: "Tình yêu ổn định nhờ sự quan tâm và chăm sóc thực tế, lời khuyên là hãy nuôi dưỡng mối quan hệ bằng sự ấm áp và trách nhiệm." },
+            { name: "Ace of Swords", 
+            url: "./photo/Ace-of-Swords.jpg", 
+            meaning: "Tình yêu cần sự rõ ràng và trung thực, lời khuyên là hãy giao tiếp thẳng thắn để giải quyết hiểu lầm và đưa mối quan hệ đi đúng hướng." },
+            { name: "2 of Swords", 
+            url: "./photo/2-of-Swords.jpg", 
+            meaning: "Tình yêu cần sự rõ ràng và trung thực, lời khuyên là hãy giao tiếp thẳng thắn để giải quyết hiểu lầm và đưa mối quan hệ đi đúng hướng." },
+            { name: "3 of Swords", 
+            url: "./photo/3-of-Swords.jpg", 
+            meaning: "Tình yêu mang tổn thương và thất vọng, lời khuyên là hãy chấp nhận nỗi đau để chữa lành và không lặp lại sai lầm." },
+            { name: "4 of Swords", 
+            url: "./photo/4-of-Swords.jpg", 
+            meaning: "Tình yêu cần thời gian nghỉ ngơi và suy ngẫm, lời khuyên là hãy tạm dừng để hồi phục cảm xúc trước khi tiếp tục mối quan hệ." },
+            { name: "5 of Swords", 
+            url: "./photo/5-of-Swords.jpg", 
+            meaning: "Tình yêu có xung đột hoặc tranh giành, lời khuyên là hãy cân nhắc thiệt hơn và tránh chiến thắng bằng mọi giá." },
+            { name: "6 of Swords", 
+            url: "./photo/6-of-Swords.jpg", 
+            meaning: "Tình yêu đang chuyển sang giai đoạn bình yên hơn sau khó khăn, lời khuyên là hãy để quá khứ lại phía sau và tiến bước cùng nhau." },
+            { name: "7 of Swords", 
+            url: "./photo/7-of-Swords.jpg", 
+            meaning: "Tình yêu có dấu hiệu lừa dối hoặc thiếu trung thực, lời khuyên là hãy thận trọng và không nên giữ mối quan hệ dựa trên giả tạo." },
+            { name: "8 of Swords", 
+            url: "./photo/8-of-Swords.jpg", 
+            meaning: "Tình yêu khiến bạn cảm thấy bị giới hạn hoặc mắc kẹt, lời khuyên là hãy giải phóng bản thân khỏi nỗi sợ và suy nghĩ tiêu cực." },
+            { name: "9 of Swords", 
+            url: "./photo/9-of-Swords.jpg", 
+            meaning: "Tình yêu không an toàn vì suy nghĩ tiêu cực, lời khuyên là hãy đối diện nỗi sợ và tìm cách giải tỏa căng thẳng thay vì dằn vặt bản thân." },
+            { name: "10 of Swords", 
+            url: "./photo/10-of-Swords.jpg", 
+            meaning: "Tình yêu đang chạm đáy đau khổ hoặc kết thúc, lời khuyên là hãy chấp nhận sự kết thúc để có thể bắt đầu lại một cách lành mạnh." },
+            { name: "Page of Swords", 
+            url: "./photo/Page-of-Swords.jpg", 
+            meaning: "Tình yêu mới hoặc mối quan hệ hiện tại cần sự tò mò và trao đổi thông tin, lời khuyên là hãy quan sát kỹ và giao tiếp rõ ràng trước khi hành động." },
+            { name: "Knight of Swords", 
+            url: "./photo/Knight-of-Swords.jpg", 
+            meaning: "Tình yêu diễn ra nhanh chóng và bốc đồng, lời khuyên là hãy kiểm soát cảm xúc và suy nghĩ trước khi quyết định vội vàng." },
+            { name: "Queen of Swords", 
+            url: "./photo/Queen-of-Swords.jpg",
+            meaning: "Tình yêu cần sự rõ ràng và lý trí, lời khuyên là hãy giữ sự độc lập cảm xúc và giao tiếp thẳng thắn trong mối quan hệ." },
+            { name: "King of Swords", 
+            url: "./photo/King-of-Swords.jpg", 
+            meaning: "Tình yêu cần sự minh bạch và công bằng, lời khuyên là hãy ra quyết định dựa trên lý trí và nguyên tắc, không để cảm xúc chi phối quá nhiều." },
+            { name: "Ace of Wands", 
+            url: "./photo/Ace-of-Wands.jpg", 
+            meaning: "Tình yêu mang năng lượng khởi đầu đầy nhiệt huyết, lời khuyên là hãy chủ động đón nhận cơ hội nhưng duy trì sự kiên định và sáng suốt." },
+            { name: "2 of Wands", 
+            url: "./photo/2-of-Wands.jpg", 
+            meaning: "Tình yêu đang ở giai đoạn cân nhắc lựa chọn, lời khuyên là hãy suy nghĩ kỹ hướng đi trước khi quyết định bước tiếp." },
+            { name: "3 of Wands", 
+            url: "./photo/3-of-Wands.jpg", 
+            meaning: "Tình yêu đang mở ra cơ hội phát triển và có đối tượng mới, lời khuyên là hãy kiên nhẫn và chuẩn bị sẵn sàng để đón nhận kết quả lâu dài." },
+            { name: "4 of Wands", 
+            url: "./photo/4-of-Wands.jpg", 
+            meaning: "Tình yêu mang niềm vui và ổn định, lời khuyên là hãy tận hưởng khoảnh khắc hạnh phúc và củng cố mối quan hệ vững chắc." },
+            { name: "5 of Wands", 
+            url: "./photo/5-of-Wands.jpg", 
+            meaning: "Tình yêu có xung đột hoặc cạnh tranh, lời khuyên là hãy tránh tranh cãi vô ích và tìm cách hợp tác để duy trì hòa khí." },
+            { name: "6 of Wands", 
+            url: "./photo/6-of-Wands.jpg", 
+            meaning: "Tình yêu đang tốt lên và dần có kết quả, lời khuyên là hãy tự tin thể hiện tình cảm và trân trọng sự công nhận từ đối phương." },
+            { name: "7 of Wands", 
+            url: "./photo/7-of-Wands.jpg", 
+            meaning: "Tình yêu cần sự kiên cường để bảo vệ mối quan hệ, lời khuyên là hãy giữ vững lập trường nhưng vẫn mềm mỏng khi đối diện thử thách." },
+            { name: "8 of Wands", 
+            url: "./photo/8-of-Wands.jpg", 
+            meaning: "Tình yêu tiến triển nhanh và rõ ràng, lời khuyên là hãy sẵn sàng đón nhận thay đổi và hành động quyết đoán khi cơ hội đến." },
+            { name: "9 of Wands", 
+            url: "./photo/9-of-Wands.jpg", 
+            meaning: "Tình yêu đòi hỏi sự kiên trì sau nhiều thử thách, lời khuyên là hãy bảo vệ mối quan hệ nhưng đừng để mệt mỏi làm mất cảm xúc." },
+            { name: "10 of Wands", 
+            url: "./photo/10-of-Wands.jpg", 
+            meaning: "Tình yêu mang gánh nặng và trách nhiệm, lời khuyên là hãy chia sẻ áp lực và không ôm mọi việc một mình để giữ mối quan hệ bền vững." },
+            { name: "Page of Wands", 
+            url: "./photo/Page-of-Wands.jpg", 
+            meaning: "Tình yêu khởi đầu với sự nhiệt huyết và tò mò, lời khuyên là hãy khám phá cảm xúc mới nhưng giữ sự chân thành và kiên nhẫn." },
+            { name: "Knight of Wands",
+            url: "./photo/Knight-of-Wands.jpg", 
+            meaning: "Tình yêu đầy nhiệt huyết và bốc đồng, lời khuyên là hãy hành động táo bạo nhưng cân nhắc hậu quả để không gây tổn thương." },
+            { name: "Queen of Wands", 
+            url: "./photo/Queen-of-Wands.jpg", 
+            meaning: "Tình yêu tỏa ra sức hút và sự tự tin, lời khuyên là hãy chủ động, lạc quan và truyền cảm hứng cho mối quan hệ." },
+            { name: "King of Wands", 
+            url: "./photo/King-of-Wands.jpg", 
+            meaning: "Tình yêu mạnh mẽ và quyết đoán, lời khuyên là hãy dẫn dắt mối quan hệ bằng sự tự tin và trách nhiệm, không để cảm xúc chi phối quá mức." }
+        ];
+
+        function shuffleArray(array) {
+    for (let i = array.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [array[i], array[j]] = [array[j], array[i]];
+    }
+}
+
+        // --- CẤU HÌNH FINAL ---
+        const CONFIG = {
+            cardCount: TAROT_DATA.length, 
+            radius: 10.5, 
+            cardWidth: 1.4, cardHeight: 2.4, 
+            inspectPos: { x: 0, y: 0, z: 3.8 }, 
+            inspectScale: 0.5,    
+            storageScale: 0.10,   
+            storageZ: 3.5, 
+            storeMarginX: 0.1,    
+            storeMarginTop: 1.1,  
+            storeGapY: 0.25       
+        };
+
+        let scene, camera, renderer, cardGroup, textureLoader;
+        let raycaster, mouse;
+        let starFieldMesh;
+        let explosions = [];
+        let storedCards = [];
+        let inspectingCard = null;
+        let isGameActive = true;
+        let particleTexture;
+
+        let handX = 0.5; 
+        let isPinching = false;
+        let cursorPosition = { x: 0, y: 0 };
+        let rotationSpeed = 0.002;
+
+        function shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+        }
+
+        // --- TẠO HẠT MÀU TRẮNG ---
+        function generateParticleTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 64; canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+            
+            const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+            grad.addColorStop(0, 'rgba(255, 255, 255, 1)');      // Trắng
+            grad.addColorStop(0.4, 'rgba(255, 255, 255, 0.5)'); 
+            grad.addColorStop(1, 'rgba(255, 255, 255, 0)');     
+            
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, 64, 64);
+            
+            const tex = new THREE.Texture(canvas);
+            tex.needsUpdate = true;
+            return tex;
+        }
+
+        function init() {
+            const container = document.getElementById('canvas-container');
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x050505, 0.02);
+            
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera.position.set(0, 0, 5);
+            
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            container.appendChild(renderer.domElement);
+
+            const ambient = new THREE.AmbientLight(0xffffff, 0.6); 
+            scene.add(ambient);
+            const spotLight = new THREE.SpotLight(0xffffff, 2.0); 
+            spotLight.position.set(0, 10, 10); 
+            scene.add(spotLight);
+
+            textureLoader = new THREE.TextureLoader();
+            particleTexture = generateParticleTexture(); 
+            
+            shuffleArray(TAROT_DATA);
+            createCards();
+            createBackgroundStars();
+
+            raycaster = new THREE.Raycaster();
+            mouse = new THREE.Vector2();
+            document.addEventListener('mousedown', onMouseDown);
+            window.addEventListener('resize', onResize);
+            
+            setTimeout(() => {
+                document.getElementById('loading').style.opacity = 0;
+                setTimeout(()=>document.getElementById('loading').style.display='none', 1500);
+            }, 2000);
+        }
+
+        function createBackgroundStars() {
+            const starCount = 800;
+            const geo = new THREE.BufferGeometry();
+            const positions = [];
+            const sizes = [];
+            for(let i=0; i<starCount; i++) {
+                positions.push((Math.random()-0.5)*60, (Math.random()-0.5)*40, (Math.random()-0.5)*50 - 10);
+                sizes.push(Math.random() * 0.5 + 0.1);
+            }
+            geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            geo.setAttribute('size', new THREE.Float32BufferAttribute(sizes, 1));
+            const sprite = textureLoader.load('sparkle.png', undefined, undefined, (err) => {});
+            const mat = new THREE.PointsMaterial({
+                size: 0.8, map: sprite, transparent: true, opacity: 0.9,
+                depthWrite: false, blending: THREE.AdditiveBlending, color: 0xffffff
+            });
+            starFieldMesh = new THREE.Points(geo, mat);
+            scene.add(starFieldMesh);
+        }
+
+        function createCards() {
+            cardGroup = new THREE.Group();
+            scene.add(cardGroup);
+            const geo = new THREE.BoxGeometry(CONFIG.cardWidth, CONFIG.cardHeight, 0.02);
+            const backTex = textureLoader.load('back.png', undefined, undefined, (err) => {});
+            const matEdge = new THREE.MeshStandardMaterial({ color: 0xd4af37, metalness: 0.8, roughness: 0.2 }); 
+
+            TAROT_DATA.forEach((data, i) => {
+                const frontTex = textureLoader.load(data.url);
+                const matFront = new THREE.MeshStandardMaterial({ map: frontTex });
+                const matBack = new THREE.MeshStandardMaterial({ map: backTex, color: 0xffffff });
+                const materials = [matEdge, matEdge, matEdge, matEdge, matBack, matFront];
+                const card = new THREE.Mesh(geo, materials);
+                
+                const angle = (i / CONFIG.cardCount) * Math.PI * 2;
+                card.position.set(Math.sin(angle) * CONFIG.radius, 0, Math.cos(angle) * CONFIG.radius);
+                card.lookAt(0, 0, 0);
+                card.userData = { id: i, data: data, isPicked: false };
+                cardGroup.add(card);
+            });
+        }
+
+        // --- HIỆU ỨNG NỔ HẠT (Bé, Chậm, Trắng) ---
+        function createExplosion(position) {
+            const particleCount = 150;
+            const geo = new THREE.BufferGeometry();
+            const positions = [];
+            const velocities = [];
+            const sizes = [];
+
+            for (let i = 0; i < particleCount; i++) {
+                positions.push(position.x, position.y, position.z); 
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+                
+                const speed = Math.random() * 0.03 + 0.01; 
+
+                velocities.push(
+                    speed * Math.sin(phi) * Math.cos(theta),
+                    speed * Math.sin(phi) * Math.sin(theta),
+                    speed * Math.cos(phi)
+                );
+                
+                sizes.push(Math.random() * 0.15 + 0.05); 
+            }
+
+            geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            geo.setAttribute('size', new THREE.Float32BufferAttribute(sizes, 1));
+
+            const mat = new THREE.PointsMaterial({
+                size: 0.2,
+                map: particleTexture, 
+                transparent: true, 
+                opacity: 0.9,
+                depthWrite: false, 
+                blending: THREE.AdditiveBlending, 
+                color: 0xffffff 
+            });
+
+            const points = new THREE.Points(geo, mat);
+            scene.add(points);
+            explosions.push({ mesh: points, velocities: velocities, age: 0 });
+        }
+
+        function updateExplosions() {
+            for (let i = explosions.length - 1; i >= 0; i--) {
+                const ex = explosions[i];
+                const positions = ex.mesh.geometry.attributes.position.array;
+                ex.age += 1;
+                for (let j = 0; j < ex.velocities.length / 3; j++) {
+                    positions[j*3] += ex.velocities[j*3];
+                    positions[j*3+1] += ex.velocities[j*3+1];
+                    positions[j*3+2] += ex.velocities[j*3+2];
+                }
+                ex.mesh.geometry.attributes.position.needsUpdate = true;
+                ex.mesh.material.opacity = 1 - (ex.age / 60); 
+                ex.mesh.scale.setScalar(1 + ex.age * 0.01); 
+                if (ex.age > 60) {
+                    scene.remove(ex.mesh);
+                    ex.mesh.geometry.dispose();
+                    explosions.splice(i, 1);
+                }
+            }
+        }
+
+        function updateCounter() {
+            document.getElementById('counter').innerText = `${storedCards.length} / 3`;
+            if (storedCards.length === 3) {
+                document.getElementById('guide-text').innerText = "Định mệnh đã an bài...";
+                setTimeout(revealReading, 2000);
+            }
+        }
+
+        function pickCard(card) {
+            if (inspectingCard || storedCards.length >= 3 || card.userData.isPicked) return;
+            card.userData.isPicked = true; inspectingCard = card;
+            scene.attach(card);
+
+            new TWEEN.Tween(card.position).to(CONFIG.inspectPos, 1000).easing(TWEEN.Easing.Cubic.Out).start();
+            new TWEEN.Tween(card.rotation).to({ x: 0, y: Math.PI, z: 0 }, 1000).easing(TWEEN.Easing.Back.Out).start();
+            
+            const targetScale = CONFIG.inspectScale;
+            new TWEEN.Tween(card.scale).to({ x: targetScale, y: targetScale, z: targetScale }, 1000)
+                .onComplete(() => { 
+                    setTimeout(() => {
+                        createExplosion(card.position);
+                        setTimeout(storeCard, 100); 
+                    }, 1500); 
+                }).start();
+        }
+
+        function getSafeVerticalLeftPosition(index) {
+            const dist = camera.position.z - CONFIG.storageZ;
+            const vFOV = THREE.MathUtils.degToRad(camera.fov);
+            const visibleHeight = 2 * Math.tan(vFOV / 2) * dist;
+            const visibleWidth = visibleHeight * camera.aspect;
+
+            const leftEdge = -visibleWidth / 2;
+            const topEdge = visibleHeight / 2;
+
+            const x = leftEdge + CONFIG.storeMarginX;
+            const y = topEdge - CONFIG.storeMarginTop - (index * CONFIG.storeGapY);
+
+            return { x, y, z: CONFIG.storageZ };
+        }
+
+        function storeCard() {
+            if (!inspectingCard) return;
+            const card = inspectingCard; storedCards.push(card); inspectingCard = null;
+            const index = storedCards.length - 1;
+
+            const pos = getSafeVerticalLeftPosition(index);
+            const scale = CONFIG.storageScale;
+
+            new TWEEN.Tween(card.position).to({ x: pos.x, y: pos.y, z: pos.z }, 800).easing(TWEEN.Easing.Exponential.Out).start();
+            new TWEEN.Tween(card.scale).to({ x: scale, y: scale, z: scale }, 800).start();
+                
+            updateCounter();
+            repositionStoredCards(); 
+        }
+
+        function repositionStoredCards() {
+            const scale = CONFIG.storageScale;
+            storedCards.forEach((c, i) => {
+                const pos = getSafeVerticalLeftPosition(i);
+                new TWEEN.Tween(c.position).to({ x: pos.x, y: pos.y, z: pos.z }, 500).start();
+                new TWEEN.Tween(c.scale).to({ x: scale, y: scale, z: scale }, 500).start();
+            });
+        }
+
+        function revealReading() {
+            isGameActive = false;
+            document.getElementById('ui-layer').style.pointerEvents = "auto";
+            document.getElementById('guide-text').style.opacity = 0;
+            document.getElementById('virtual-cursor').style.display = 'none';
+            const content = document.getElementById('final-reading');
+            const contexts = ["VẤN ĐỀ", "LÝ DO", "LỜI KHUYÊN"];
+            let html = "";
+            storedCards.forEach((c, i) => {
+                const data = c.userData.data;
+                html += `
+                <div class="reading-section">
+                    <span class="reading-label">✦ ${contexts[i]}</span>
+                    <div class="reading-body">
+                        <img src="${data.url}" class="reading-img">
+                        <div class="reading-content">
+                            <h3>${data.name}</h3>
+                            <div class="reading-desc">${data.meaning}</div>
+                        </div>
+                    </div>
+                </div>`;
+            });
+            content.innerHTML = html;
+            document.getElementById('result-modal').style.display = 'block';
+        }
+
+        function onMouseDown(event) {
+            if (!isGameActive || storedCards.length >= 3) return;
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(cardGroup.children);
+            if (intersects.length > 0) pickCard(intersects[0].object);
+        }
+
+        function onResults(results) {
+            const cursor = document.getElementById('virtual-cursor');
+            const guide = document.getElementById('guide-text');
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const lm = results.multiHandLandmarks[0];
+                if(storedCards.length === 0) guide.innerText = "Chụm ngón cái và trỏ để chọn";
+                handX = 1 - lm[9].x; 
+                const x = (lm[8].x + lm[4].x) / 2;
+                const y = (lm[8].y + lm[4].y) / 2;
+                const screenX = (1 - x) * window.innerWidth;
+                const screenY = y * window.innerHeight;
+                
+                cursor.style.display = 'block'; 
+                cursor.style.left = `${screenX}px`; 
+                cursor.style.top = `${screenY}px`;
+                
+                cursorPosition.x = (screenX / window.innerWidth) * 2 - 1;
+                cursorPosition.y = -(screenY / window.innerHeight) * 2 + 1;
+
+                const distance = Math.hypot(lm[8].x - lm[4].x, lm[8].y - lm[4].y);
+                const isPinchingNow = distance < 0.08; 
+
+                if (isPinchingNow && !isPinching) {
+                    cursor.classList.add('pinching'); 
+                    if (isGameActive) {
+                        raycaster.setFromCamera(cursorPosition, camera);
+                        const intersects = raycaster.intersectObjects(cardGroup.children);
+                        if (intersects.length > 0) {
+                            pickCard(intersects[0].object);
+                        }
+                    }
+                } else if (!isPinchingNow) {
+                    cursor.classList.remove('pinching');
+                }
+                isPinching = isPinchingNow;
+            } else {
+                cursor.style.display = 'none';
+            }
+        }
+
+        function onResize() {
+            camera.aspect = window.innerWidth / window.innerHeight; 
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            repositionStoredCards();
+        }
+
+        function animate(time) {
+            requestAnimationFrame(animate); 
+            TWEEN.update(time);
+            updateExplosions(); 
+
+            if (isGameActive) {
+                let targetRotSpeed = 0.001; // Tốc độ mặc định khi đứng yên
+                
+                // ĐÃ CẬP NHẬT: Tăng tốc độ quay khi đưa tay sang 2 bên
+                if (handX < 0.4) targetRotSpeed = -0.035; // Bên trái (Nhanh hơn)
+                else if (handX > 0.6) targetRotSpeed = 0.035; // Bên phải (Nhanh hơn)
+                
+                rotationSpeed += (targetRotSpeed - rotationSpeed) * 0.05;
+                cardGroup.rotation.y += rotationSpeed;
+
+                cardGroup.children.forEach((c, i) => { 
+                    if(!c.userData.isPicked) c.position.y = Math.sin(time * 0.0015 + i) * 0.15; 
+                });
+            }
+
+            if(starFieldMesh) {
+                starFieldMesh.rotation.y = time * 0.00005;
+                starFieldMesh.material.size = Math.sin(time * 0.002) * 0.1 + 0.9;
+            }
+            renderer.render(scene, camera);
+        }
+
+        init(); animate();
+
+        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+        hands.onResults(onResults);
+        
+        const videoElement = document.getElementById('input-video');
+        const cam = new Camera(videoElement, {
+            onFrame: async () => { await hands.send({image: videoElement}); },
+            width: 640, height: 480
+        });
+        cam.start();
+
+    </script>
+</body>
+</html>
